@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Heat stress decision aid chart — Live</title>
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+<style>
+:root {
+  --bg: #ffffff;
+  --panel: #f7f7f7;
+  --border: #cfcfcf;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: var(--bg);
+  color: #111;
+}
+
+.wrap {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 14px;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr auto auto auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.card label {
+  font-size: 13px;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 6px;
+}
+
+select, input[type="text"] {
+  width: 100%;
+  padding: 10px 8px;
+  font-size: 16px; /* 16px avoids iOS auto-zoom on focus */
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.subfield { margin-top: 8px; }
+.subfield.hidden { display: none; }
+
+button {
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  height: 44px;
+  font-size: 15px;
+  width: 100%;
+}
+
+.primary { background: #0b5; color: white; }
+.secondary { background: #333; color: white; }
+.tertiary { background: #b00; color: white; }
+
+#plot {
+  width: 100%;
+  height: 74vh;
+  min-height: 650px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: white;
+}
+
+.hint { font-size: 12px; color: #444; margin-top: 6px; }
+
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  background: #eef7ff;
+  border: 1px solid #bcdcff;
+  border-radius: 8px;
+}
+
+.status-bar .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #0b5;
+  margin-right: 6px;
+  animation: pulse 2s infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+.print-heading {
+  display: none;
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.print-heading .line1 {
+  font-weight: bold;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+/* ============ MOBILE LAYOUT ============ */
+@media (max-width: 760px) {
+  .wrap { padding: 8px; }
+
+  .controls {
+    grid-template-columns: 1fr 1fr;
+  }
+  .controls .card:first-child {
+    grid-column: 1 / -1; /* data source card takes full width */
+  }
+  .controls button {
+    grid-column: span 1;
+  }
+  .controls button:nth-of-type(1) { grid-column: 1 / -1; } /* Refresh Now, full width, most-used action */
+
+  .status-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    font-size: 13px;
+  }
+
+  #plot {
+    height: 62vh;
+    min-height: 420px;
+    border-radius: 8px;
+  }
+
+  .zone-desc { font-size: 13px !important; }
+  .source-note { font-size: 12px !important; }
+}
+
+@media (max-width: 420px) {
+  .controls {
+    grid-template-columns: 1fr; /* single column on very small phones */
+  }
+  .controls .card:first-child,
+  .controls button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media print {
+  body { background: white; }
+  .controls, .hint, .status-bar { display: none !important; }
+  .zone-desc, .source-note { display: block !important; margin-top: 20px; text-align: center; }
+  .wrap { max-width: none; padding: 0; }
+  .print-heading { display: block !important; }
+  #plot { height: 74vh; border: none; }
+  @page { size: landscape; margin: 8mm; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="print-heading">
+  <div class="line1">Heat stress decision aid chart</div>
+  <div id="date-range" style="font-size: 16px; margin-top: 8px; color: #333; font-weight: bold;"></div>
+</div>
+
+<div class="status-bar" id="statusBar">
+  <div><span class="dot"></span><span id="statusText">Not connected yet.</span></div>
+  <div id="lastUpdated">—</div>
+</div>
+
+<div class="controls">
+  <div class="card">
+    <label for="sourceSelect">Data source</label>
+    <select id="sourceSelect" onchange="onSourceChange()">
+      <option value="auto" selected>My current location</option>
+      <option value="manual">Manual coordinates</option>
+      <option value="manualdata">Enter temperature &amp; humidity</option>
+      <option value="ambient">Shakurbasti weather station</option>
+    </select>
+
+    <div class="subfield hidden" id="manualFields">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="manualLat" placeholder="Latitude e.g. 28.66" style="flex:1; min-width:120px;">
+        <input type="text" id="manualLon" placeholder="Longitude e.g. 77.10" style="flex:1; min-width:120px;">
+      </div>
+    </div>
+
+    <div class="subfield hidden" id="manualDataFields">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <input type="text" id="manualTemp" placeholder="Temperature °C e.g. 34.5" style="flex:1; min-width:120px;">
+        <input type="text" id="manualRh" placeholder="Humidity % e.g. 55" style="flex:1; min-width:120px;">
+      </div>
+    </div>
+
+    <div class="subfield hidden" id="ambientFields">
+      <input type="text" id="ambientWorkerUrl" value="" readonly style="background:#eee; color:#555;">
+      <div class="hint">Visitors never see or enter any key. This page calls the worker URL above only, which is hardcoded in the page's DEFAULT_WORKER_URL setting and only ever returns temperature/humidity — never your credentials.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <label for="intervalSelect">Auto-refresh every</label>
+    <select id="intervalSelect" onchange="setupAutoRefresh()">
+      <option value="0">Off (manual only)</option>
+      <option value="5" selected>5 minutes</option>
+      <option value="10">10 minutes</option>
+      <option value="15">15 minutes</option>
+      <option value="30">30 minutes</option>
+      <option value="60">60 minutes</option>
+    </select>
+    <div class="hint" id="nextRefreshHint">&nbsp;</div>
+  </div>
+
+  <button class="primary" onclick="fetchAndPlot()">Refresh Now</button>
+  <button class="secondary" onclick="window.print()">Print / Save PDF</button>
+  <button class="tertiary" onclick="clearHistory()">Clear Today's Points</button>
+</div>
+
+<div id="plot"></div>
+
+<div class="zone-desc" style="margin-top: 20px; font-size: 15px; text-align: center; color: #333;">
+  <strong>Green = Safe &nbsp;&nbsp; | &nbsp;&nbsp; Yellow = Caution &nbsp;&nbsp; | &nbsp;&nbsp; Red = Danger</strong>
+</div>
+
+<div class="source-note" style="margin-top: 15px; text-align: center; font-size: 14px; color: #555; font-style: italic;">
+  Data compiled at Station Health Organisation, Shakurbasti
+</div>
+</div>
+
+<script>
+// ================== Owner configuration ==================
+// Paste your Cloudflare Worker URL here once (see the worker README for setup).
+// This is NOT a secret — it can't be used to pull your data without the keys
+// the worker holds — so it's fine that it lives in this public page's source.
+const DEFAULT_WORKER_URL = 'https://ambient-weather-proxy.heatstress.workers.dev';
+
+// ================== Zone boundary math (unchanged from original) ==================
+function safeCautionBoundary(rh) {
+  return 40.1247562 - 0.287219702 * rh + 0.00195590150 * rh * rh - 0.00000452294349 * rh * rh * rh;
+}
+
+function cautionDangerBoundary(rh) {
+  if (rh < 29.137) return 42.5;
+  const t = 52.9675892 - 0.468153228 * rh + 0.00421088398 * rh * rh - 0.0000162471061 * rh * rh * rh;
+  return Math.min(t, 42.5);
+}
+
+function heatZone(temp, rh) {
+  const gy = safeCautionBoundary(rh);
+  if (temp < gy) return 'Safe';
+  const yr = cautionDangerBoundary(rh);
+  if (temp < yr) return 'Caution';
+  return 'Danger';
+}
+
+function symbolFor(i) {
+  const symbols = ['circle', 'square', 'diamond', 'triangle-up', 'x', 'star', 'cross', 'triangle-down', 'hexagon'];
+  return symbols[i % symbols.length];
+}
+
+// ================== "Feels like" (heat index) ==================
+// Standard NWS Rothfusz regression, computed in °F/RH% then converted back to °C.
+// Below ~80°F, a simple average-based estimate is used (matches actual temperature
+// closely at that range, since heat-index effects are minimal below that point).
+function feelsLikeC(tempC, rh) {
+  const tempF = tempC * 9 / 5 + 32;
+
+  let hiF = 0.5 * (tempF + 61.0 + ((tempF - 68.0) * 1.2) + (rh * 0.094));
+
+  if ((hiF + tempF) / 2 >= 80) {
+    hiF = -42.379 + 2.04901523 * tempF + 10.14333127 * rh
+        - 0.22475541 * tempF * rh - 0.00683783 * tempF * tempF
+        - 0.05481717 * rh * rh + 0.00122874 * tempF * tempF * rh
+        + 0.00085282 * tempF * rh * rh - 0.00000199 * tempF * tempF * rh * rh;
+
+    // Standard low-humidity / high-humidity correction terms
+    if (rh < 13 && tempF >= 80 && tempF <= 112) {
+      hiF -= ((13 - rh) / 4) * Math.sqrt((17 - Math.abs(tempF - 95)) / 17);
+    } else if (rh > 85 && tempF >= 80 && tempF <= 87) {
+      hiF += ((rh - 85) / 10) * ((87 - tempF) / 5);
+    }
+  }
+
+  return (hiF - 32) * 5 / 9;
+}
+
+function buildBackground() {
+  const rh = [];
+  for (let x = 10; x <= 100; x += 0.25) rh.push(Math.round(x * 100) / 100);
+
+  const safe = rh.map(x => safeCautionBoundary(x));
+  const caution = rh.map(x => cautionDangerBoundary(x));
+  const top = Array(rh.length).fill(42.5);
+
+  return [
+    {x: rh, y: safe, showlegend:false, hoverinfo:'skip', type:'scatter', mode:'lines', fill:'tozeroy', fillcolor:'rgba(0,140,0,0.85)', line:{shape:'spline', color:'transparent'}},
+    {x: rh, y: caution, showlegend:false, hoverinfo:'skip', type:'scatter', mode:'lines', fill:'tonexty', fillcolor:'rgba(255,230,0,0.8)', line:{shape:'spline', color:'transparent'}},
+    {x: rh, y: top, showlegend:false, hoverinfo:'skip', type:'scatter', mode:'lines', fill:'tonexty', fillcolor:'rgba(220,0,0,0.85)', line:{shape:'spline', color:'transparent'}}
+  ];
+}
+
+// ================== Date / storage helpers ==================
+function todayKey() {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function storageKey() {
+  return 'heatStressReadings-' + todayKey();
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(storageKey());
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveHistory(arr) {
+  try { localStorage.setItem(storageKey(), JSON.stringify(arr)); } catch (e) {}
+}
+
+function clearHistory() {
+  localStorage.removeItem(storageKey());
+  renderPlot(loadHistory());
+  setStatus('History for today cleared.', false);
+}
+
+function formatDMY(dateObj) {
+  const dd = String(dateObj.getDate()).padStart(2, '0');
+  const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const yyyy = dateObj.getFullYear();
+  return `${dd}-${mm}-${yyyy}`;
+}
+
+function formatHM(dateObj) {
+  const hh = String(dateObj.getHours()).padStart(2, '0');
+  const mi = String(dateObj.getMinutes()).padStart(2, '0');
+  return `${hh}${mi}`;
+}
+
+// ================== UI helpers ==================
+function setStatus(text, isError) {
+  document.getElementById('statusText').textContent = text;
+  const bar = document.getElementById('statusBar');
+  bar.style.background = isError ? '#ffecec' : '#eef7ff';
+  bar.style.borderColor = isError ? '#ffb3b3' : '#bcdcff';
+}
+
+function onSourceChange() {
+  const source = document.getElementById('sourceSelect').value;
+  document.getElementById('manualFields').classList.toggle('hidden', source !== 'manual');
+  document.getElementById('manualDataFields').classList.toggle('hidden', source !== 'manualdata');
+  // ambientFields (worker URL + hint) stays hidden always — it's informational only
+  // and fetchAndPlot() reads DEFAULT_WORKER_URL directly, not this field.
+}
+
+// ================== Location helpers ==================
+function getBrowserLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('Geolocation not supported by this browser.')); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({lat: pos.coords.latitude, lon: pos.coords.longitude}),
+      err => reject(new Error('Location permission denied or unavailable. Try Manual coordinates instead.')),
+      {enableHighAccuracy: false, timeout: 10000, maximumAge: 300000}
+    );
+  });
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+    if (!res.ok) throw new Error('reverse geocode failed');
+    const d = await res.json();
+    const parts = [d.locality, d.principalSubdivision, d.countryName].filter(Boolean);
+    return parts.join(', ') || `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  } catch (e) {
+    return `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  }
+}
+
+// ================== Data fetchers ==================
+async function fetchOpenMeteo(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m&timezone=auto`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Open-Meteo request failed (' + res.status + ')');
+  const d = await res.json();
+  if (!d.current) throw new Error('Open-Meteo returned no current data.');
+  return {
+    temp_c: d.current.temperature_2m,
+    rh: d.current.relative_humidity_2m,
+    time: new Date()
+  };
+}
+
+async function fetchAmbient(workerUrl) {
+  // Calls YOUR Cloudflare Worker proxy, not Ambient Weather directly.
+  // The worker holds the MAC address / API key / Application key as secrets
+  // server-side, so none of them ever reach this page or its source code.
+  const res = await fetch(workerUrl);
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.json()).error || ''; } catch (e) {}
+    throw new Error('Proxy request failed (' + res.status + '). ' + detail);
+  }
+  const d = await res.json();
+  if (d.temp_c === undefined || d.rh === undefined) {
+    throw new Error('Proxy response missing temp_c/rh. Check the worker is deployed and secrets are set.');
+  }
+  return {
+    temp_c: d.temp_c,
+    rh: d.rh,
+    time: d.observed_at ? new Date(d.observed_at) : new Date()
+  };
+}
+
+// ================== Main fetch + plot cycle ==================
+async function fetchAndPlot() {
+  const source = document.getElementById('sourceSelect').value;
+  setStatus('Fetching latest reading…', false);
+
+  try {
+    let reading, locationLabel;
+
+    if (source === 'auto') {
+      const {lat, lon} = await getBrowserLocation();
+      reading = await fetchOpenMeteo(lat, lon);
+      locationLabel = await reverseGeocode(lat, lon);
+    } else if (source === 'manual') {
+      const lat = parseFloat(document.getElementById('manualLat').value);
+      const lon = parseFloat(document.getElementById('manualLon').value);
+      if (isNaN(lat) || isNaN(lon)) throw new Error('Enter valid latitude and longitude.');
+      reading = await fetchOpenMeteo(lat, lon);
+      locationLabel = await reverseGeocode(lat, lon);
+    } else if (source === 'manualdata') {
+      // No API call at all — just read the two typed-in values directly.
+      const temp = parseFloat(document.getElementById('manualTemp').value);
+      const rh = parseFloat(document.getElementById('manualRh').value);
+      if (isNaN(temp) || isNaN(rh)) throw new Error('Enter both a temperature (°C) and a humidity (%) value.');
+      if (rh < 0 || rh > 100) throw new Error('Humidity must be between 0 and 100%.');
+      reading = { temp_c: temp, rh: rh, time: new Date() };
+      locationLabel = 'Manually entered reading';
+    } else {
+      const workerUrl = DEFAULT_WORKER_URL;
+      if (!workerUrl || workerUrl.includes('YOUR-SUBDOMAIN')) {
+        throw new Error('Owner setup needed: paste your real worker URL into DEFAULT_WORKER_URL near the top of the <script> section.');
+      }
+      reading = await fetchAmbient(workerUrl);
+      locationLabel = 'Shakurbasti weather station';
+    }
+
+    const history = loadHistory();
+    const feels_c = Math.round(feelsLikeC(reading.temp_c, reading.rh) * 10) / 10;
+    history.push({
+      iso: reading.time.toISOString(),
+      temp_c: Math.round(reading.temp_c * 10) / 10,
+      rh: Math.round(reading.rh * 10) / 10,
+      feels_c: feels_c,
+      location: locationLabel
+    });
+    saveHistory(history);
+    renderPlot(history);
+
+    const prefix = source === 'manualdata' ? 'Recorded' : 'Live';
+    setStatus(`${prefix} — ${locationLabel} — ${reading.temp_c.toFixed(1)}°C (feels like ${feels_c.toFixed(1)}°C), ${reading.rh.toFixed(0)}% RH (${heatZone(reading.temp_c, reading.rh)})`, false);
+    document.getElementById('lastUpdated').textContent = 'Last updated: ' + reading.time.toLocaleString();
+
+  } catch (err) {
+    setStatus('Error: ' + err.message, true);
+  }
+}
+
+// ================== Responsive helpers ==================
+function isMobile() {
+  return window.innerWidth < 760;
+}
+
+// ================== Plotly rendering ==================
+let lastHistory = [];
+
+function renderPlot(history) {
+  lastHistory = history || [];
+  const traces = buildBackground();
+  const dateDisplay = document.getElementById('date-range');
+
+  if (!history || history.length === 0) {
+    dateDisplay.textContent = 'No data yet';
+    Plotly.newPlot('plot', traces, baseLayout(), plotConfig());
+    return;
+  }
+
+  const first = new Date(history[0].iso);
+  const last = new Date(history[history.length - 1].iso);
+  dateDisplay.textContent = history.length === 1
+    ? `on ${formatDMY(first)} at ${formatHM(first)} H`
+    : `from ${formatDMY(first)} ${formatHM(first)} H to ${formatDMY(last)} ${formatHM(last)} H`;
+
+  const mobile = isMobile();
+
+  history.forEach((r, i) => {
+    const t = new Date(r.iso);
+    const zone = heatZone(r.temp_c, r.rh);
+    const isLatest = i === history.length - 1;
+    const label = `${formatDMY(t)} ${formatHM(t)}`;
+    // Older points saved before this feature existed won't have feels_c stored —
+    // compute it on the fly so the chart still shows it for every point.
+    const feels = r.feels_c !== undefined ? r.feels_c : Math.round(feelsLikeC(r.temp_c, r.rh) * 10) / 10;
+
+    traces.push({
+      x: [r.rh],
+      y: [r.temp_c],
+      type: 'scatter',
+      mode: mobile ? 'markers' : 'markers+text', // hide inline text labels on mobile to reduce clutter; still visible on hover/tap
+      name: `${label} (${r.temp_c}°C, feels ${feels}°C, ${r.rh}%) - ${zone}`,
+      text: [isLatest ? label + ' ★' : label],
+      textposition: 'top center',
+      textfont: {color:'#000', size: isLatest ? 13 : 11},
+      marker: {
+        size: isLatest ? (mobile ? 16 : 18) : (mobile ? 10 : 12),
+        symbol: symbolFor(i),
+        color: '#000',
+        line: {width: isLatest ? 2.5 : 1.5, color:'#fff'}
+      },
+      hovertemplate: `Date: ${label}<br>Location: ${r.location}<br>Temp: ${r.temp_c}°C<br>Feels like: ${feels}°C<br>RH: ${r.rh}%<br>Zone: ${zone}<extra></extra>`
+    });
+  });
+
+  Plotly.newPlot('plot', traces, baseLayout(), plotConfig());
+}
+
+function plotConfig() {
+  return {
+    responsive: true,
+    displaylogo: false,
+    scrollZoom: false,           // mouse-wheel / trackpad pinch zoom disabled
+    doubleClick: false,          // double-click-to-reset-zoom disabled
+    modeBarButtonsToRemove: [    // remove zoom-related icons from the toolbar
+      'zoom2d', 'zoomIn2d', 'zoomOut2d', 'pan2d', 'autoScale2d', 'resetScale2d'
+    ]
+  };
+}
+
+function baseLayout() {
+  const mobile = isMobile();
+
+  return {
+    paper_bgcolor: 'white',
+    plot_bgcolor: 'white',
+    dragmode: false,        // disables box-zoom / drag-to-zoom on the plot area
+    xaxis: {
+      title: {text: '<b>Relative Humidity (%)</b>', font:{size: mobile ? 13 : 20}},
+      range: [10, 100],
+      fixedrange: true,     // locks this axis so it cannot be zoomed or panned
+      dtick: 10,
+      gridcolor: 'rgba(0,0,0,0.15)',
+      tickfont: {size: mobile ? 10 : 12}
+    },
+    yaxis: {
+      title: {text: '<b>Temperature (°C)</b>', font:{size: mobile ? 13 : 20}},
+      range: [20, 42.5],
+      fixedrange: true,     // locks this axis so it cannot be zoomed or panned
+      dtick: mobile ? 2 : 0.5,
+      gridcolor: 'rgba(0,0,0,0.15)',
+      tickfont: {size: mobile ? 10 : 12}
+    },
+    // On mobile: legend moves below the chart, horizontal, wrapping — a right-side
+    // vertical legend has no room on a narrow screen and used to push the plot off-canvas.
+    legend: mobile
+      ? {
+          orientation: 'h',
+          x: 0,
+          y: -0.25,
+          font: {size: 9},
+          title: {text: ''}
+        }
+      : {
+          orientation: 'v',
+          x: 1.02,
+          y: 1,
+          title: {text: '<b>Time Key</b>'}
+        },
+    margin: mobile
+      ? {l: 55, r: 15, t: 20, b: 90}
+      : {l: 90, r: 220, t: 40, b: 90}
+  };
+}
+
+// Re-render (not just resize) on orientation/viewport changes that cross the mobile breakpoint,
+// so the legend position and marker/font sizing switch correctly — Plotly's own
+// responsive:true only handles resizing the canvas, not these layout choices.
+let resizeDebounce = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeDebounce);
+  resizeDebounce = setTimeout(() => renderPlot(lastHistory), 250);
+});
+
+// ================== Auto-refresh scheduling ==================
+let refreshTimer = null;
+
+function setupAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+  const minutes = parseInt(document.getElementById('intervalSelect').value, 10);
+  const hint = document.getElementById('nextRefreshHint');
+  if (minutes > 0) {
+    refreshTimer = setInterval(fetchAndPlot, minutes * 60 * 1000);
+    hint.textContent = `Auto-refreshing every ${minutes} min.`;
+  } else {
+    hint.textContent = 'Auto-refresh is off — use Refresh Now.';
+  }
+}
+
+// ================== Init ==================
+onSourceChange();
+renderPlot(loadHistory());
+setupAutoRefresh();
+fetchAndPlot();
+</script>
+</body>
+</html>

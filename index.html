@@ -49,7 +49,7 @@ body {
   margin-bottom: 6px;
 }
 
-select, input[type="text"] {
+select, input[type="text"], input[type="search"] {
   width: 100%;
   padding: 10px 8px;
   font-size: 16px; /* 16px avoids iOS auto-zoom on focus */
@@ -234,9 +234,10 @@ button {
 
     <div class="subfield hidden" id="locationSearchFields">
       <div class="location-search-wrap">
-        <input type="text" id="locationSearch" placeholder="Enter city or location e.g. New Delhi" autocomplete="off" aria-autocomplete="list" aria-controls="locationSuggestions" aria-expanded="false">
+        <input type="search" id="locationSearch" placeholder="Enter city or location e.g. New Delhi" autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-controls="locationSuggestions" aria-expanded="false">
         <div id="locationSuggestions" class="location-suggestions hidden" role="listbox"></div>
       </div>
+      <div class="hint">Type at least 2 characters, then select a location from the suggestions.</div>
     </div>
 
     <div class="subfield hidden" id="manualFields">
@@ -390,6 +391,7 @@ function setStatus(text, isError) {
 function onSourceChange() {
   const source = document.getElementById('sourceSelect').value;
   document.getElementById('locationSearchFields').classList.toggle('hidden', source !== 'location');
+  if (source !== 'location' && typeof hideLocationSuggestions === 'function') hideLocationSuggestions();
   document.getElementById('manualFields').classList.toggle('hidden', source !== 'manual');
   document.getElementById('manualDataFields').classList.toggle('hidden', source !== 'manualdata');
   // ambientFields (worker URL + hint) stays hidden always — it's informational only
@@ -487,6 +489,17 @@ function hideLocationSuggestions() {
   activeLocationIndex = -1;
 }
 
+function showLocationMessage(message) {
+  const box = document.getElementById('locationSuggestions');
+  box.innerHTML = '';
+  const row = document.createElement('div');
+  row.className = 'location-empty';
+  row.textContent = message;
+  box.appendChild(row);
+  box.classList.remove('hidden');
+  document.getElementById('locationSearch').setAttribute('aria-expanded', 'true');
+}
+
 function chooseLocation(index) {
   const place = locationMatches[index];
   if (!place) return;
@@ -534,6 +547,7 @@ async function updateLocationSuggestions() {
   }
 
   const requestId = ++locationSearchRequest;
+  showLocationMessage('Searching locations…');
   try {
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=8&language=en&format=json`;
     const res = await fetch(url);
@@ -544,14 +558,28 @@ async function updateLocationSuggestions() {
     activeLocationIndex = -1;
     renderLocationSuggestions();
   } catch (e) {
-    if (requestId === locationSearchRequest) hideLocationSuggestions();
+    if (requestId === locationSearchRequest) {
+      locationMatches = [];
+      showLocationMessage('Could not load suggestions. Check the internet connection and try again.');
+    }
   }
 }
 
 const locationSearchInput = document.getElementById('locationSearch');
 locationSearchInput.addEventListener('input', () => {
   clearTimeout(locationSearchTimer);
-  locationSearchTimer = setTimeout(updateLocationSuggestions, 300);
+  const query = locationSearchInput.value.trim();
+  selectedLocation = null;
+  if (query.length < 2) {
+    locationMatches = [];
+    hideLocationSuggestions();
+    return;
+  }
+  showLocationMessage('Searching locations…');
+  locationSearchTimer = setTimeout(updateLocationSuggestions, 200);
+});
+locationSearchInput.addEventListener('focus', () => {
+  if (locationMatches.length) renderLocationSuggestions();
 });
 locationSearchInput.addEventListener('keydown', event => {
   if (event.key === 'Escape') {

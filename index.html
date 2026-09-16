@@ -61,6 +61,32 @@ select, input[type="text"] {
 .subfield { margin-top: 8px; }
 .subfield.hidden { display: none; }
 
+.location-search-wrap { position: relative; }
+.location-suggestions {
+  position: absolute;
+  z-index: 1000;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 5px 14px rgba(0,0,0,0.18);
+}
+.location-suggestions.hidden { display: none; }
+.location-option {
+  padding: 9px 10px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.25;
+  border-bottom: 1px solid #eee;
+}
+.location-option:last-child { border-bottom: 0; }
+.location-option:hover, .location-option.active { background: #eef7ff; }
+.location-empty { padding: 9px 10px; color: #666; font-size: 13px; }
+
 button {
   padding: 12px 14px;
   border: 0;
@@ -207,7 +233,10 @@ button {
     </select>
 
     <div class="subfield hidden" id="locationSearchFields">
-      <input type="text" id="locationSearch" placeholder="Enter city or location e.g. New Delhi">
+      <div class="location-search-wrap">
+        <input type="text" id="locationSearch" placeholder="Enter city or location e.g. New Delhi" autocomplete="off" aria-autocomplete="list" aria-controls="locationSuggestions" aria-expanded="false">
+        <div id="locationSuggestions" class="location-suggestions hidden" role="listbox"></div>
+      </div>
     </div>
 
     <div class="subfield hidden" id="manualFields">
@@ -439,6 +468,109 @@ async function searchLocation(query) {
   return {lat: place.latitude, lon: place.longitude, label: label || name};
 }
 
+let locationSearchTimer = null;
+let locationSearchRequest = 0;
+let locationMatches = [];
+let activeLocationIndex = -1;
+let selectedLocation = null;
+
+function locationLabel(place) {
+  return [place.name, place.admin1, place.country].filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(', ');
+}
+
+function hideLocationSuggestions() {
+  const box = document.getElementById('locationSuggestions');
+  box.classList.add('hidden');
+  document.getElementById('locationSearch').setAttribute('aria-expanded', 'false');
+  activeLocationIndex = -1;
+}
+
+function chooseLocation(index) {
+  const place = locationMatches[index];
+  if (!place) return;
+  const label = locationLabel(place) || place.name;
+  selectedLocation = {lat: place.latitude, lon: place.longitude, label, inputValue: label};
+  document.getElementById('locationSearch').value = label;
+  hideLocationSuggestions();
+}
+
+function renderLocationSuggestions() {
+  const box = document.getElementById('locationSuggestions');
+  box.innerHTML = '';
+
+  if (!locationMatches.length) {
+    const empty = document.createElement('div');
+    empty.className = 'location-empty';
+    empty.textContent = 'No matching locations found';
+    box.appendChild(empty);
+  } else {
+    locationMatches.forEach((place, index) => {
+      const option = document.createElement('div');
+      option.className = 'location-option' + (index === activeLocationIndex ? ' active' : '');
+      option.setAttribute('role', 'option');
+      option.textContent = locationLabel(place) || place.name;
+      option.addEventListener('mousedown', event => {
+        event.preventDefault();
+        chooseLocation(index);
+      });
+      box.appendChild(option);
+    });
+  }
+
+  box.classList.remove('hidden');
+  document.getElementById('locationSearch').setAttribute('aria-expanded', 'true');
+}
+
+async function updateLocationSuggestions() {
+  const input = document.getElementById('locationSearch');
+  const query = input.value.trim();
+  selectedLocation = null;
+  if (query.length < 2) {
+    locationMatches = [];
+    hideLocationSuggestions();
+    return;
+  }
+
+  const requestId = ++locationSearchRequest;
+  try {
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=8&language=en&format=json`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Location suggestions unavailable.');
+    const data = await res.json();
+    if (requestId !== locationSearchRequest || input.value.trim() !== query) return;
+    locationMatches = data.results || [];
+    activeLocationIndex = -1;
+    renderLocationSuggestions();
+  } catch (e) {
+    if (requestId === locationSearchRequest) hideLocationSuggestions();
+  }
+}
+
+const locationSearchInput = document.getElementById('locationSearch');
+locationSearchInput.addEventListener('input', () => {
+  clearTimeout(locationSearchTimer);
+  locationSearchTimer = setTimeout(updateLocationSuggestions, 300);
+});
+locationSearchInput.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    hideLocationSuggestions();
+    return;
+  }
+  if (!locationMatches.length || document.getElementById('locationSuggestions').classList.contains('hidden')) return;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    activeLocationIndex = (activeLocationIndex + step + locationMatches.length) % locationMatches.length;
+    renderLocationSuggestions();
+  } else if (event.key === 'Enter' && activeLocationIndex >= 0) {
+    event.preventDefault();
+    chooseLocation(activeLocationIndex);
+  }
+});
+locationSearchInput.addEventListener('blur', () => setTimeout(hideLocationSuggestions, 150));
+
 // ================== Data fetchers ==================
 async function fetchOpenMeteo(lat, lon, targetDate) {
   // Live mode (unchanged from before) — exact current reading.
@@ -546,7 +678,10 @@ async function fetchAndPlot() {
       reading = await fetchOpenMeteo(lat, lon, targetDateTime);
       locationLabel = await reverseGeocode(lat, lon);
     } else if (source === 'location') {
-      const place = await searchLocation(document.getElementById('locationSearch').value);
+      const inputValue = document.getElementById('locationSearch').value.trim();
+      const place = selectedLocation && selectedLocation.inputValue === inputValue
+        ? selectedLocation
+        : await searchLocation(inputValue);
       reading = await fetchOpenMeteo(place.lat, place.lon, targetDateTime);
       locationLabel = place.label;
     } else if (source === 'manual') {
